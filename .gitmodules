@@ -3,4 +3,4 @@
 	url = git@github.com:progirep/planet.git
 [submodule "ReluplexCav2017"]
 	path = ReluplexCav2017
-	url = git@github.com:guykatzz/ReluplexCav2017.git
+	url = git@github.com:bunelr/ReluplexCav2017.git
