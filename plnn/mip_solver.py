@@ -5,6 +5,8 @@ from torch import nn
 from plnn.modules import View
 from plnn.network_linear_approximation import LinearizedNetwork
 
+from torch.autograd import Variable
+
 class MIPNetwork:
 
     def __init__(self, layers):
@@ -28,17 +30,173 @@ class MIPNetwork:
         solution: Feasible point if the MIP is satisfiable,
                   None otherwise.
         '''
-        # First use define_linear_approximation from LinearizedNetwork to
-        # compute upper and lower bounds to be able to define Ms
-        self.lin_net.define_linear_approximation(inp_domain)
 
-        self.lower_bounds = self.lin_net.lower_bounds
-        self.upper_bounds = self.lin_net.upper_bounds
+
+        if self.check_obj_value_callback:
+            def early_stop_cb(model, where):
+                if where == grb.GRB.Callback.MIPNODE:
+                    nodeCount = model.cbGet(grb.GRB.Callback.MIPNODE_NODCNT)
+                    if (nodeCount % 100) == 0:
+                        print(f"Running Nb states visited: {nodeCount}")
+                if where == grb.GRB.Callback.MIPSOL:
+                    obj = model.cbGet(grb.GRB.Callback.MIPSOL_OBJ)
+                    if obj < 0:
+                        # Does it have a chance at being a valid
+                        # counter-example?
+
+                        # Check it with the network
+                        input_vals = model.cbGetSolution(self.gurobi_vars[0])
+
+                        inps = Variable(torch.Tensor(input_vals).view(1, -1),
+                                        volatile=True)
+                        out = self.net(inps).data[0, 0]
+
+                        if out < 0:
+                            model.terminate()
+        else:
+            def early_stop_cb(model, where):
+                if where == grb.GRB.Callback.MIPNODE:
+                    nodeCount = model.cbGet(grb.GRB.Callback.MIPNODE_NODCNT)
+                    if (nodeCount % 100) == 0:
+                        print(f"Running Nb states visited: {nodeCount}")
+
+        self.model.optimize(early_stop_cb)
+        nb_visited_states = self.model.nodeCount
+
+        if self.model.status is grb.GRB.INFEASIBLE:
+            # Infeasible: No solution
+            return (False, None, nb_visited_states)
+        else:
+            # There is a feasible solution. Return the feasible solution as well.
+            len_inp = len(self.gurobi_vars[0])
+
+            # Get the input that gives the feasible solution.
+            inp = torch.Tensor(len_inp)
+            for idx, var in enumerate(self.gurobi_vars[0]):
+                inp[idx] = var.x
+            optim_val = self.gurobi_vars[-1][-1].x
+
+            return (True, (inp, optim_val), nb_visited_states)
+
+    def tune(self, param_outfile, tune_timeout):
+        self.model.Params.tuneOutput = 1
+        self.model.Params.tuneTimeLimit = tune_timeout
+        self.model.tune()
+
+        # Get the best set of parameters
+        self.model.getTuneResult(0)
+
+        self.model.write(param_outfile)
+
+    def do_interval_analysis(self, inp_domain):
+        self.lower_bounds = []
+        self.upper_bounds = []
+
+        inp_lb = []
+        inp_ub = []
+        for dim, (lb, ub) in enumerate(inp_domain):
+            inp_lb.append(lb)
+            inp_ub.append(ub)
+        self.lower_bounds.append(inp_lb)
+        self.upper_bounds.append(inp_ub)
+
+        layer_idx = 1
+        for layer in self.layers:
+            new_layer_lb = []
+            new_layer_ub = []
+            if type(layer) is nn.Linear:
+                for neuron_idx in range(layer.weight.size(0)):
+                    ub = layer.bias.data[neuron_idx]
+                    lb = layer.bias.data[neuron_idx]
+                    for prev_neuron_idx in range(layer.weight.size(1)):
+                        coeff = layer.weight.data[neuron_idx, prev_neuron_idx]
+                        if coeff >= 0:
+                            ub += coeff * self.upper_bounds[-1][prev_neuron_idx]
+                            lb += coeff * self.lower_bounds[-1][prev_neuron_idx]
+                        else:
+                            ub += coeff * self.lower_bounds[-1][prev_neuron_idx]
+                            lb += coeff * self.upper_bounds[-1][prev_neuron_idx]
+                    new_layer_lb.append(lb)
+                    new_layer_ub.append(ub)
+            elif type(layer) == nn.ReLU:
+                for neuron_idx, (pre_lb, pre_ub) in enumerate(zip(self.lower_bounds[-1],
+                                                                  self.upper_bounds[-1])):
+                    if pre_lb >= 0 and pre_ub >= 0:
+                        lb = pre_lb
+                        ub = pre_ub
+                    elif pre_lb <= 0 and pre_ub <= 0:
+                        lb = 0
+                        ub = 0
+                    else:
+                        lb = 0
+                        ub = pre_ub
+                    new_layer_lb.append(lb)
+                    new_layer_ub.append(ub)
+            elif type(layer) == nn.MaxPool1d:
+                assert layer.padding == 0, "Non supported Maxpool option"
+                assert layer.dilation == 1, "Non supported Maxpool option"
+
+                nb_pre = len(self.lower_bounds[-1])
+                window_size = layer.kernel_size
+                stride = layer.stride
+
+                pre_start_idx = 0
+                pre_window_end = pre_start_idx + window_size
+
+                while pre_window_end <= nb_pre:
+                    lb = max(self.lower_bounds[-1][pre_start_idx:pre_window_end])
+                    ub = max(self.upper_bounds[-1][pre_start_idx:pre_window_end])
+
+                    new_layer_lb.append(lb)
+                    new_layer_ub.append(ub)
+
+                    pre_start_idx += stride
+                    pre_window_end = pre_start_idx + window_size
+            elif type(layer) == View:
+                continue
+            else:
+                raise NotImplementedError
+
+            self.lower_bounds.append(new_layer_lb)
+            self.upper_bounds.append(new_layer_ub)
+
+            layer_idx += 1
+
+    def setup_model(self, inp_domain,
+                    sym_bounds=False,
+                    use_obj_function=False,
+                    interval_analysis=False,
+                    parameter_file=None):
+        '''
+        inp_domain: Tensor containing in each row the lower and upper bound
+                    for the corresponding dimension
+
+        optimal: If False, don't use any objective function, simply add a constraint on the output
+                 If True, perform optimization and use callback to interrupt the solving when a
+                          counterexample is found
+        interval_analysis: Boolean, indicating whether interval analysis should be used
+                           instead of the planet relaxation to obtain bounds
+        parameter_file: Load a set of parameters for the MIP solver if a path is given.
+
+        Setup the model to be optimized by Gurobi
+        '''
+
+        if interval_analysis:
+            self.do_interval_analysis(inp_domain)
+        else:
+            # First use define_linear_approximation from LinearizedNetwork to
+            # compute upper and lower bounds to be able to define Ms
+            self.lin_net.define_linear_approximation(inp_domain)
+
+            self.lower_bounds = self.lin_net.lower_bounds
+            self.upper_bounds = self.lin_net.upper_bounds
         self.gurobi_vars = []
 
         self.model = grb.Model()
         self.model.setParam('OutputFlag', False)
         self.model.setParam('Threads', 1)
+        if parameter_file is not None:
+            self.model.read(parameter_file)
 
         # First add the input variables as Gurobi variables.
         inp_gurobi_vars = []
@@ -78,42 +236,51 @@ class MIPNetwork:
                     pre_ub = self.upper_bounds[layer_idx-1][neuron_idx]
 
                     # Use the constraints specified by
-                    # Maximum Resilience of Artificial Neural Networks paper.
+                    # Verifying Neural Networks with Mixed Integer Programming
                     # MIP formulation of ReLU:
                     #
                     # x = max(pre_var, 0)
                     #
                     # Introduce binary variable b, such that:
-                    # b = 1 if in is the maximum value, 0 otherwise
-                    #
-                    # Introduce a continuous variable M, such that -M <= pre_var <= M:
+                    # b = 1 if inp is the maximum value, 0 otherwise
                     #
                     # We know the lower (pre_lb) and upper bounds (pre_ub) for pre_var
                     # We can thus write the following:
-                    # M = max(-pre_lb, pre_ub)
                     #
                     # MIP must then satisfy the following constraints:
-                    # Constr_2a: x >= 0
-                    # Constr_2b: x >= pre_var
-                    # Constr_3a: pre_var - b*M <= 0
-                    # Constr_3b: pre_var + (1-b)*M >= 0
-                    # Constr_4a: x <= pre_var + (1-b)*M
-                    # Constr_4b: x <= b*M
+                    # Constr_13: x <= pre_var - pre_lb (1-b)
+                    # Constr_14: x >= pre_var
+                    # Constr_15: x <= b* pre_ub
+                    # Constr_16: x >= 0
 
-                    M = max(-pre_lb, pre_ub)
-                    x = self.model.addVar(lb=0,
-                                          ub=grb.GRB.INFINITY,
-                                          vtype=grb.GRB.CONTINUOUS,
-                                          name = f'RelU_x_{layer_idx}_{neuron_idx}')
-                    b = self.model.addVar(vtype=grb.GRB.BINARY,
-                                          name= f'ReLU_b_{layer_idx}_{neuron_idx}')
+                    if sym_bounds:
+                        # We're going to use the big-M encoding of the other papers.
+                        M = max(-pre_lb, pre_ub)
+                        pre_lb = -M
+                        pre_ub = M
 
-                    self.model.addConstr(x >= 0, f'constr_{layer_idx}_{neuron_idx}_c2a')
-                    self.model.addConstr(x >= pre_var, f'constr_{layer_idx}_{neuron_idx}_c2b')
-                    self.model.addConstr(pre_var - b*M <= 0, f'constr_{layer_idx}_{neuron_idx}_c3a')
-                    self.model.addConstr(pre_var + (1-b)*M >= 0, f'constr_{layer_idx}_{neuron_idx}_c3b')
-                    self.model.addConstr(x <= pre_var + (1-b)*M , f'constr_{layer_idx}_{neuron_idx}_c4a')
-                    self.model.addConstr(x <= b*M , f'constr_{layer_idx}_{neuron_idx}_c4b')
+                    if pre_lb <= 0 and pre_ub <=0:
+                        x = self.model.addVar(lb=0, ub=0,
+                                              vtype=grb.GRB.CONTINUOUS,
+                                              name = f'ReLU_x_{layer_idx}_{neuron_idx}')
+                    elif (pre_lb >= 0) and (pre_ub >= 0):
+                        x = self.model.addVar(lb=pre_lb, ub=pre_ub,
+                                              vtype=grb.GRB.CONTINUOUS,
+                                              name = f'ReLU_x_{layer_idx}_{neuron_idx}')
+                        self.model.addConstr(x == pre_var, f'constr_{layer_idx}_{neuron_idx}_fixedpassing')
+                    else:
+                        x = self.model.addVar(lb=0,
+                                              ub=grb.GRB.INFINITY,
+                                              vtype=grb.GRB.CONTINUOUS,
+                                              name = f'ReLU_x_{layer_idx}_{neuron_idx}')
+                        b = self.model.addVar(vtype=grb.GRB.BINARY,
+                                              name= f'ReLU_b_{layer_idx}_{neuron_idx}')
+
+                        self.model.addConstr(x <= pre_var - pre_lb * (1-b), f'constr_{layer_idx}_{neuron_idx}_c13')
+                        self.model.addConstr(x >= pre_var, f'constr_{layer_idx}_{neuron_idx}_c14')
+                        self.model.addConstr(x <= b * pre_ub, f'constr_{layer_idx}_{neuron_idx}_c15')
+                        # self.model.addConstr(x >= 0, f'constr_{layer_idx}_{neuron_idx}_c16')
+                        # (implied already by bound on x)
 
                     self.model.update()
 
@@ -183,23 +350,13 @@ class MIPNetwork:
 
         # Add the final constraint that the output must be less than or equal
         # to zero.
-        self.model.addConstr(self.gurobi_vars[-1][-1] <= 0)
+        if not use_obj_function:
+            self.model.addConstr(self.gurobi_vars[-1][-1] <= 0)
+            self.model.setObjective(0, grb.GRB.MAXIMIZE)
+            self.check_obj_value_callback = False
+        else:
+            self.model.setObjective(self.gurobi_vars[-1][-1], grb.GRB.MINIMIZE)
+            self.check_obj_value_callback = True
 
         # Optimize the model.
         self.model.update()
-        self.model.setObjective(0, grb.GRB.MAXIMIZE)
-        self.model.optimize()
-
-        if self.model.status is grb.GRB.INFEASIBLE:
-            # Infeasible: No solution
-            return (False, None)
-        else:
-            # There is a feasible solution. Return the feasible solution as well.
-            len_inp = len(self.gurobi_vars[0])
-
-            # Get the input that gives the feasible solution.
-            inp = torch.Tensor(len_inp)
-            for idx, var in enumerate(self.gurobi_vars[0]):
-                inp[idx] = var.x
-
-            return (True, inp)

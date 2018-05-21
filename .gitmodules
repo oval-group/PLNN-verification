@@ -4,3 +4,6 @@
 [submodule "ReluplexCav2017"]
 	path = ReluplexCav2017
 	url = git@github.com:bunelr/ReluplexCav2017.git
+[submodule "convex_adversarial"]
+	path = convex_adversarial
+	url = git@github.com:locuslab/convex_adversarial.git
