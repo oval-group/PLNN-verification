@@ -3,12 +3,18 @@ import argparse
 import glob
 import itertools
 import os
+import re
 from collections import Counter
 
-FAILS = ['timeout', 'OOM']
+FAILS = ['timeout', 'OOM', 'ERROR']
 SAT = 'SAT'
 UNSAT = 'UNSAT'
+ERROR = 'ERROR'
 timeout_time = 7200
+
+reluplex_log_re = re.compile('Total visited states:\s*(?P<nb_visited_states>\d+)')
+standard_log_re = re.compile('Nb states visited:\s*(?P<nb_visited_states>\d+)(\.0)?$')
+samples_log_re = re.compile('Nb samples:\s*(?P<nb_visited_states>\d+)')
 
 def load_bench_results(bench_folder):
     all_results = {}
@@ -37,12 +43,51 @@ def load_bench_results(bench_folder):
                 dp_status = UNSAT
             elif 'SAT' in dec_content:
                 dp_status = SAT
+            elif 'Error' in dec_content:
+                dp_status = ERROR
+                # dp_time = timeout_time
             else:
                 raise Exception(f"Unknown status in file {path_to_decision}:\n{dec_content}")
         else:
             dp_time = timeout_time
 
-        all_results[dp_id] = (dp_status, float(dp_time))
+        ## Collect the info on the number of splits
+        nb_states = None
+        is_reluplex = 'reluplex' in bench_folder
+        is_noformal = 'noFormal' in bench_folder
+        if is_reluplex:
+            if dp_status != 'timeout':
+                # There should be a '.final' file, where the last element of the
+                # line is the number of splits
+                path_to_final = dp + '.final'
+                with open(path_to_final, 'r') as final:
+                    dec_content = final.read()
+                nb_states = int(dec_content.split(',')[-1])
+            else:
+                # There is no '.final' file but there should be a log file.
+                # We can go look at the last printout of statistics and query this
+                path_to_log = dp + '.log'
+                with open(path_to_log, 'r') as logfile:
+                    for line in logfile.readlines():
+                        if line.strip().startswith('So far'):
+                            match = re.search(reluplex_log_re, line)
+                            nb_states = int(match["nb_visited_states"])
+        else:
+            path_to_out = dp + ".log"
+            with open(path_to_out, 'r') as outfile:
+                for line in outfile.readlines():
+                    if is_noformal:
+                        match = re.search(samples_log_re, line.strip())
+                    else:
+                        match = re.search(standard_log_re, line.strip())
+                    if match is not None:
+                        nb_states = int(match["nb_visited_states"])
+                        if nb_states == 0:
+                            # We're considering the number of visited nodes,
+                            # so there is at least one
+                            nb_states = 1
+
+        all_results[dp_id] = (dp_status, float(dp_time), nb_states)
 
     return all_results
 
@@ -62,7 +107,7 @@ def remove_non_common(all_results):
 
     common_results = {method: {k: res[k] for k in common_keys}
                       for method, res in all_results.items()}
-
+    print(f"Total number of properties after removing non-common: {len(common_keys)}")
     return common_results
 
 
@@ -74,6 +119,17 @@ def count_fails(d, gt_map):
         elif res[0] != gt_map[k]:
             fail_count += 1
     return fail_count
+
+def count_error(d, gt_map):
+    error_count = 0
+    for k, res in d.items():
+        if res[0] == ERROR:
+            error_count += 1
+        elif res[0] not in FAILS and res[0] != gt_map[k]:
+            error_count += 1
+    return error_count
+
+
 
 
 def win_count(all_results, gt_map):
@@ -100,6 +156,7 @@ def win_count(all_results, gt_map):
                 if (second_best_score - best_score) / best_score < 1e-2:
                     best_method = "Ties"
             win_counts[best_method] += 1
+            # print(f"Case: {k} -> {best_method}")
     return win_counts
 
 
@@ -125,7 +182,7 @@ def build_GT_table(all_results, all_unsat=False):
     per_method_dec = {}
 
     for method, results in all_results.items():
-        for case, (status, timing) in results.items():
+        for case, (status, timing, nb_nodes) in results.items():
             if case not in per_method_dec:
                 per_method_dec[case] = {}
             per_method_dec[case][method] = status
@@ -136,7 +193,18 @@ def build_GT_table(all_results, all_unsat=False):
     for case, m2dec_map in per_method_dec.items():
         if all_unsat:
             gt_table[case] = UNSAT
+        elif "__margin" in case:
+            if "depth--" in case:
+                # There is one separating dash, the other is the minus sign
+                gt_table[case] = SAT
+            else:
+                # There is only the separating dash, the margin is positive
+                # That means the property is True, problem is unsatisfiable
+                gt_table[case] = UNSAT
         else:
+            for method, dec in m2dec_map.items():
+                if dec == ERROR:
+                    print(f"**WARNING** Method {method} is wrong on {case}")
             all_decs = [dec for dec in m2dec_map.values() if dec not in FAILS]
             if len(all_decs) == 0:
                 # No method managed to solve this problem
@@ -189,11 +257,14 @@ def main():
     # Compute the ratio of Fails for each
     print("=== Proportion of successfully solved test cases")
     for method, results in all_results.items():
+        error_count = count_error(results, gt_table)
         fail_count = count_fails(results, gt_table)
         nb_prop = len(results)
         print(f"{method}:\n\tSolved: {nb_prop - fail_count}"
-              f"\tAttempted: {nb_prop}\t"
-              f"Success rate: {100*(1-fail_count/nb_prop)}")
+              f"\tError: {error_count}"
+              f"\tAttempted: {nb_prop}"
+              f"\tSuccess rate: {100*(1-fail_count/nb_prop):.2f}"
+              f"\tError rate: {100*(error_count / nb_prop):.2f}")
     print(f"{len(gt_table_all_none)} properties solved by no methods.")
 
     # Compute the numbers of wins
@@ -240,14 +311,16 @@ def main():
         for method, results in sorted(all_results.items()):
             sat_results = {k: results[k] for k in gt_table_only_SAT
                            if k in results}
-            mtd_avg_timing = average_runtime(sat_results)
-            print(f"{method} average runtime: {mtd_avg_timing} s")
+            if len(sat_results) > 0:
+                mtd_avg_timing = average_runtime(sat_results)
+                print(f"{method} average runtime: {mtd_avg_timing} s")
     print("\n=== Average runtimes on UNSAT problems")
     for method, results in sorted(all_results.items()):
         unsat_results = {k: results[k] for k in gt_table_only_UNSAT
                          if k in results}
-        mtd_avg_timing = average_runtime(unsat_results)
-        print(f"{method} average runtime: {mtd_avg_timing} s")
+        if len(unsat_results) > 0:
+            mtd_avg_timing = average_runtime(unsat_results)
+            print(f"{method} average runtime: {mtd_avg_timing} s")
 
 if __name__ == '__main__':
     main()

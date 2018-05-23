@@ -10,43 +10,53 @@ from plnn.network_linear_approximation import LinearizedNetwork
 from torch.autograd import Variable
 from timeit import default_timer as timer
 
+font = {'size': 26}
+
+matplotlib.rc('font', **font)
+
 def make_plots(target_filename, measurements):
     (values, timings, names, dom_areas) = measurements
+    target_format = "eps" if target_filename.endswith('.eps') else "png"
 
     markers = ["r-", "g-", "b-", "y-"]
-    fig = plt.figure(figsize=(10, 5))
+    fig = plt.figure(figsize=(10, 10))
 
     ax_value = plt.subplot(1, 1, 1)
     ax_value.set_xscale("log")
 
     global_min = min(map(min, values))
     global_max = max(map(max, values))
-    ratio = global_max / global_min
+    ratio = (global_max - global_min)  / abs(global_max)
 
     if ratio > 100:
         ax_value.set_yscale("symlog")
 
     for mtd_idx in range(len(names)):
         ax_value.plot(dom_areas, values[mtd_idx], markers[mtd_idx],
-                      label=names[mtd_idx], linewidth=3.0)
+                      label=names[mtd_idx], linewidth=12.0)
     ax_value.set_ylabel("Lower bound")
     ax_value.set_xlabel("Relative area")
     ax_value.grid(b=True, axis='both')
     ax_value.legend()
 
-    # ax_timings = plt.subplot(2, 1, 2)
-    # ax_timings.set_xscale("log")
-    # for mtd_idx in range(len(names)):
-    #     ax_timings.plot(dom_areas, timings[mtd_idx], markers[mtd_idx],
-    #                     label=names[mtd_idx])
-    # ax_timings.set_ylabel("Computation time (in s)")
-    # ax_timings.set_xlabel("Relative area")
-    # ax_timings.legend(loc='upper center', bbox_to_anchor=(0.5, -0.5),
-    #                   ncol=1)
-    # ax_timings.grid(b=True, axis='both')
-    # ax_timings.legend()
-    target_format = "eps" if target_filename.endswith('.eps') else ".png"
     plt.savefig(target_filename, format=target_format, dpi=300)
+
+    fig = plt.figure(figsize=(10, 5))
+    ax_timings = plt.subplot(1, 1, 1)
+    ax_timings.set_xscale("log")
+    ax_timings.set_yscale("log")
+    for mtd_idx in range(len(names)):
+        ax_timings.plot(dom_areas, timings[mtd_idx], markers[mtd_idx],
+                        label=names[mtd_idx])
+    ax_timings.set_ylabel("Computation time (in s)")
+    ax_timings.set_xlabel("Relative area")
+    ax_timings.legend(loc='upper center', bbox_to_anchor=(0.5, -0.5),
+                      ncol=1, fontsize=36)
+    ax_timings.grid(b=True, axis='both')
+    ax_timings.legend()
+
+    timings_filename = target_filename.replace("." + target_format, "timings." + target_format)
+    plt.savefig(timings_filename, format=target_format, dpi=300)
 
 def benchmark(rlv_infile, nb_splits, shrink_factor):
     '''
