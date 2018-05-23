@@ -38,7 +38,7 @@ class CandidateDomain:
         return dom_area
 
 
-def bab(net, domain, eps=1e-3, decision_bound=None):
+def bab(net, domain, eps=1e-3, decision_bound=None, smart_branching=None):
     '''
     Uses branch and bound algorithm to evaluate the global minimum
     of a given neural network.
@@ -53,7 +53,7 @@ def bab(net, domain, eps=1e-3, decision_bound=None):
     Returns         : Lower bound and Upper bound on the global minimum,
                       as well as the point where the upper bound is achieved
     '''
-
+    nb_visited_states = 0
     global_ub_point, global_ub = net.get_upper_bound(domain)
     global_lb = net.get_lower_bound(domain)
 
@@ -79,9 +79,21 @@ def bab(net, domain, eps=1e-3, decision_bound=None):
         selected_candidate_domain = pick_out(domains, global_ub-eps)
 
         # Genearate new, smaller (normalized) domains using box split.
-        ndoms = box_split(selected_candidate_domain.domain)
+        if smart_branching is None:
+            # Simply do longest edge
+            ndoms = box_split(selected_candidate_domain.domain)
+        else:
+            # Follow the heuristic
+            useful_cutoff = global_ub - eps
+            if decision_bound is not None:
+                useful_cutoff = min(useful_cutoff, decision_bound)
+            ndoms = smart_box_split(selected_candidate_domain.domain, smart_branching,
+                                    domain_lb, domain_width, useful_cutoff)
 
         for ndom_i in ndoms:
+            nb_visited_states += 1
+            if (nb_visited_states % 10) == 0:
+                print(f"Running Nb states visited: {nb_visited_states}")
             # Find the upper and lower bounds on the minimum in dom_i
             dom_i = domain_lb + domain_width * ndom_i
             dom_ub_point, dom_ub = net.get_upper_bound(dom_i)
@@ -126,12 +138,13 @@ def bab(net, domain, eps=1e-3, decision_bound=None):
             global_lb = global_ub - eps
 
         # Stopping criterion
-        if (decision_bound is not None) and (global_lb >= decision_bound):
-            break
-        elif global_ub < decision_bound:
-            break
+        if decision_bound is not None:
+            if (global_lb >= decision_bound):
+                break
+            elif (global_ub < decision_bound):
+                break
 
-    return global_lb, global_ub, global_ub_point
+    return global_lb, global_ub, global_ub_point, nb_visited_states
 
 
 def add_domain(candidate, domains):
@@ -194,6 +207,49 @@ def box_split(domain):
     dom2[dim, 0] += half_length
 
     sub_domains = [dom1, dom2]
+
+    return sub_domains
+
+def smart_box_split(ndomain, dualnet, domain_lb, domain_width, useful_cutoff):
+    '''
+    Use box-constraints to split the input domain.
+    Split by dividing the domain into two.
+    We decide on which dimension to split by trying all splits with a cheap lower bound.
+
+    `domain`:  A 2d tensor whose rows contain lower and upper limits
+               of the corresponding dimension.
+    Returns: A list of sub-domains represented as 2d tensors.
+    '''
+    # We're going to try all possible combinations and get the bounds for each,
+    # and pick the one with the largest (lowest lower bound of the two part)
+    domain = domain_lb + domain_width * ndomain
+    largest_lowest_lb = -float('inf')
+    largest_lowest_lb_dim = None
+    split_lbs = None
+    for dim in range(domain.shape[0]):
+        # Split alongst the i-th dimension
+
+        dom1 = domain.clone()
+        dom1[dim, 1] = (dom1[dim, 1] + dom1[dim, 0]) / 2
+        dom2 = domain.clone()
+        dom2[dim, 0] = (dom2[dim, 1] + dom2[dim, 0]) / 2
+
+        both_doms = torch.stack([dom1, dom2], 0)
+
+        lbs = dualnet.get_lower_bounds(both_doms)
+
+        lowest_lb = lbs.min()
+        if lowest_lb > largest_lowest_lb:
+            largest_lowest_lb = lowest_lb
+            largest_lowest_lb_dim = dim
+            split_lbs = lbs
+
+    ndom1 = ndomain.clone()
+    ndom1[largest_lowest_lb_dim, 1] = (ndom1[largest_lowest_lb_dim, 1] + ndom1[largest_lowest_lb_dim, 0]) / 2
+    ndom2 = ndomain.clone()
+    ndom2[largest_lowest_lb_dim, 0] = (ndom2[largest_lowest_lb_dim, 1] + ndom2[largest_lowest_lb_dim, 0]) / 2
+
+    sub_domains = [ndom1, ndom2]
 
     return sub_domains
 

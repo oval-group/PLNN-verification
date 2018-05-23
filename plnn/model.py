@@ -486,7 +486,10 @@ def simplify_network(all_layers):
             prev_layer = new_all_layers.pop()
 
             joint_weight = torch.mm(layer.weight.data, prev_layer.weight.data)
-            joint_bias = layer.bias.data + torch.mv(layer.weight.data, prev_layer.bias.data)
+            if prev_layer.bias is not None:
+                joint_bias = layer.bias.data + torch.mv(layer.weight.data, prev_layer.bias.data)
+            else:
+                joint_bias = layer.bias.data
 
             joint_out_features = layer.out_features
             joint_in_features = prev_layer.in_features

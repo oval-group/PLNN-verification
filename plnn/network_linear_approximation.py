@@ -1,4 +1,5 @@
 import gurobipy as grb
+import math
 import torch
 
 from plnn.modules import View
@@ -15,7 +16,14 @@ class LinearizedNetwork:
         self.layers = layers
         self.net = nn.Sequential(*layers)
 
-    def get_upper_bound(self, domain):
+    def remove_maxpools(self, domain):
+        from plnn.model import reluify_maxpool, simplify_network
+        if any(map(lambda x: type(x) is nn.MaxPool1d, self.layers)):
+            new_layers = simplify_network(reluify_maxpool(self.layers, domain))
+            self.layers = new_layers
+
+
+    def get_upper_bound_random(self, domain):
         '''
         Compute an upper bound of the minimum of the network on `domain`
 
@@ -47,6 +55,71 @@ class LinearizedNetwork:
         ub_point = inps[idx].squeeze()
 
         return ub_point, upper_bound
+
+    def get_upper_bound_pgd(self, domain):
+        '''
+        Compute an upper bound of the minimum of the network on `domain`
+
+        Any feasible point is a valid upper bound on the minimum so we will
+        perform some random testing.
+        '''
+        nb_samples = 2056
+        torch.set_num_threads(1)
+        nb_inp = domain.size(0)
+        # Not a great way of sampling but this will be good enough
+        # We want to get rows that are >= 0
+        rand_samples = torch.Tensor(nb_samples, nb_inp)
+        rand_samples.uniform_(0, 1)
+
+        best_ub = float('inf')
+        best_ub_inp = None
+
+        domain_lb = domain.select(1, 0).contiguous()
+        domain_ub = domain.select(1, 1).contiguous()
+        domain_width = domain_ub - domain_lb
+
+        domain_lb = domain_lb.view(1, nb_inp).expand(nb_samples, nb_inp)
+        domain_width = domain_width.view(1, nb_inp).expand(nb_samples, nb_inp)
+
+        inps = domain_lb + domain_width * rand_samples
+
+        batch_ub = float('inf')
+        for i in range(1000):
+            prev_batch_best = batch_ub
+
+            var_inps = Variable(inps, requires_grad=True)
+            out = self.net(var_inps)
+
+            batch_ub = out.data.min()
+            if batch_ub < best_ub:
+                best_ub = batch_ub
+                # print(f"New best lb: {best_lb}")
+                val, idx = out.data.min(dim=0)
+                best_ub_inp = inps[idx[0]]
+
+            if batch_ub >= prev_batch_best:
+                break
+
+            all_samp_sum = out.sum() / nb_samples
+            all_samp_sum.backward()
+            grad = var_inps.grad.data
+
+            max_grad, _ = grad.max(dim=0)
+            min_grad, _ = grad.min(dim=0)
+            grad_diff = max_grad - min_grad
+
+            lr = 1e-2 * domain_width / grad_diff
+            min_lr = lr.min()
+
+            step = -min_lr*grad
+            inps += step
+
+            inps = torch.max(inps, domain_lb)
+            inps = torch.min(inps, domain_ub)
+
+        return best_ub_inp, best_ub
+
+    get_upper_bound = get_upper_bound_random
 
     def get_lower_bound(self, domain):
         '''
