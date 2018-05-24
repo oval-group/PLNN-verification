@@ -318,6 +318,9 @@ class LinearizedNetwork:
         self.model.update()
 
 
+class InfeasibleMaskException(Exception):
+    pass
+
 class AssumptionLinearizedNetwork(LinearizedNetwork):
 
     def __init__(self, layers):
