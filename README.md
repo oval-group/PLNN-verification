@@ -25,6 +25,8 @@ included as submodules. If you make use of them, please cite the corresponding p
 
 
 ## Structure of the repository
+* `./convex_adversarial` is a git submodule, linking to [the Provably Robust
+  Neural Network repository](https://github.com/locuslab/convex_adversarial)
 * `./planet/` is a git submodule, linking
   to [the official Planet repository](https://github.com/progirep/planet)
 * `./ReluplexCav2017/` is a git submodule, linking to a fork
@@ -55,6 +57,7 @@ from [here](http://www.gurobi.com/academia/for-universities).
 `sh` to instrument other solvers. 
 * **Reluplex** and **Planet** have their own dependency, described in their
   Readme page.
+
   
 ### Installing everything
 We recommend installing everything into a python virtual environment.
@@ -103,6 +106,10 @@ qmake
 make
 # if you encounter linker issues, move -lsuitesparseconfig to the end of the flag list
 cd ../..
+
+## Install the code for computing fast heuristic bounds
+cd convex_adversarial
+python setup.py install
 ```
 
 ### Running the experiments
