@@ -34,10 +34,16 @@ class MIPNetwork:
 
         if self.check_obj_value_callback:
             def early_stop_cb(model, where):
+                if where == grb.GRB.Callback.MIP:
+                    best_bound = model.cbGet(grb.GRB.Callback.MIP_OBJBND)
+                    if best_bound > 0:
+                        model.terminate()
+
                 if where == grb.GRB.Callback.MIPNODE:
                     nodeCount = model.cbGet(grb.GRB.Callback.MIPNODE_NODCNT)
                     if (nodeCount % 100) == 0:
                         print(f"Running Nb states visited: {nodeCount}")
+
                 if where == grb.GRB.Callback.MIPSOL:
                     obj = model.cbGet(grb.GRB.Callback.MIPSOL_OBJ)
                     if obj < 0:
@@ -66,7 +72,7 @@ class MIPNetwork:
         if self.model.status is grb.GRB.INFEASIBLE:
             # Infeasible: No solution
             return (False, None, nb_visited_states)
-        else:
+        elif self.model.status is grb.GRB.OPTIMAL:
             # There is a feasible solution. Return the feasible solution as well.
             len_inp = len(self.gurobi_vars[0])
 
@@ -76,7 +82,24 @@ class MIPNetwork:
                 inp[idx] = var.x
             optim_val = self.gurobi_vars[-1][-1].x
 
-            return (True, (inp, optim_val), nb_visited_states)
+            return (optim_val < 0, (inp, optim_val), nb_visited_states)
+        elif self.model.status is grb.GRB.INTERRUPTED:
+            obj_bound = self.model.ObjBound
+
+            if obj_bound > 0:
+                return (False, None, nb_visited_states)
+            else:
+                # There is a feasible solution. Return the feasible solution as well.
+                len_inp = len(self.gurobi_vars[0])
+
+                # Get the input that gives the feasible solution.
+                inp = torch.Tensor(len_inp)
+                for idx, var in enumerate(self.gurobi_vars[0]):
+                    inp[idx] = var.x
+                optim_val = self.gurobi_vars[-1][-1].x
+            return (optim_val < 0, (inp, optim_val), nb_visited_states)
+        else:
+            raise Exception("Unexpected Status code")
 
     def tune(self, param_outfile, tune_timeout):
         self.model.Params.tuneOutput = 1
