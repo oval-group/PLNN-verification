@@ -52,6 +52,11 @@ def main():
         torch.utils.data.TensorDataset(mnist_test.test_data, mnist_test.test_labels),
         batch_size=1, shuffle=False
     )
+
+    neg_layer = nn.Linear(1, 1)
+    neg_layer.weight.data.fill_(-1)
+    neg_layer.bias.data.fill_(0)
+
     nb_done = 0
     for data, target in test_loader:
         print(f"{time.ctime()} \tExample {nb_done} starting")
@@ -77,7 +82,8 @@ def main():
         verif_layers = layers + [additional_lin_layer,
                                  View((1, 9)),
                                  nn.MaxPool1d(9),
-                                 View((1,))]
+                                 View((1,)),
+                                 neg_layer]
 
 
         print(f"{time.ctime()} \tExample {nb_done} has spec.")
@@ -93,8 +99,13 @@ def main():
             print(f"{time.ctime()} \tExample {nb_done} is Robust.")
         else:
             print(f"{time.ctime()} \tExample {nb_done} is not Robust.")
+            adv_example = Variable(solution[0].view(1, -1))
+            pred_on_adv = test_net(adv_example)
+            print(f"{time.ctime()} \tPredictions: {pred_on_adv.data}")
+            print(f"{time.ctime()} \tGT is: {target.data}")
 
         print("\n\n")
+        nb_done += 1
 
 
 if __name__ == '__main__':
