@@ -78,6 +78,7 @@ def main():
             if cls != gt:
                 lin_weights[to, cls] = 1
                 lin_weights[to, gt] = -1
+                to += 1
 
         verif_layers = layers + [additional_lin_layer,
                                  View((1, 9)),

@@ -30,7 +30,9 @@ class MIPNetwork:
         solution: Feasible point if the MIP is satisfiable,
                   None otherwise.
         '''
-
+        if self.lower_bounds[-1][0] > 0:
+            # The problem is infeasible, and we haven't setup the MIP
+            return (False, None, 0)
 
         if self.check_obj_value_callback:
             def early_stop_cb(model, where):
@@ -191,6 +193,10 @@ class MIPNetwork:
 
         if interval_analysis:
             self.do_interval_analysis(inp_domain)
+            if self.lower_bounds[-1][0] > 0:
+                # The problem is already guaranteed to be infeasible,
+                # Let's not waste time setting up the MIP
+                return
         else:
             # First use define_linear_approximation from LinearizedNetwork to
             # compute upper and lower bounds to be able to define Ms
@@ -203,6 +209,7 @@ class MIPNetwork:
         self.model = grb.Model()
         self.model.setParam('OutputFlag', False)
         self.model.setParam('Threads', 1)
+        self.model.setParam('DualReductions', 0)
         if parameter_file is not None:
             self.model.read(parameter_file)
 
