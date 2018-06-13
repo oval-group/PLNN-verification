@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+import os
 import time
 import torch
 import torchvision
@@ -38,15 +39,15 @@ def main():
     test_net = nn.Sequential(*layers)
     test_net.eval()
 
-    correct = 0
-    for data, target in test_loader:
-        var_data = Variable(data.float().view(-1, 28*28)/255.0, volatile=True)
-        output = test_net(var_data)
-        pred = output.data.max(1, keepdim=True)[1]
-        correct += pred.eq(target.view_as(pred)).sum()
-    accuracy = 100 * correct / len(test_loader.dataset)
-
-    print(f"Nominal accuracy on MNIST test set: {accuracy} %")
+    # correct = 0
+    # for data, target in test_loader:
+    #     var_data = Variable(data.float().view(-1, 28*28)/255.0, volatile=True)
+    #     output = test_net(var_data)
+    #     pred = output.data.max(1, keepdim=True)[1]
+    #     correct += pred.eq(target.view_as(pred)).sum()
+    # accuracy = 100 * correct / len(test_loader.dataset)
+    #
+    # print(f"Nominal accuracy on MNIST test set: {accuracy} %")
 
     test_loader = torch.utils.data.DataLoader(
         torch.utils.data.TensorDataset(mnist_test.test_data, mnist_test.test_labels),
@@ -58,8 +59,16 @@ def main():
     neg_layer.bias.data.fill_(0)
 
     nb_done = 0
+    verif_result_folder = 'weights/verif_result'
     for data, target in test_loader:
+        example_res_file = verif_result_folder + f"/{nb_done}_sample.txt"
+        if os.path.isfile(example_res_file):
+            nb_done += 1
+            continue
+
+
         print(f"{time.ctime()} \tExample {nb_done} starting")
+        start = time.time()
         net_layers = layers
 
         data_lb = data.float().view(28*28)/255.0 - args.adv_perturb
@@ -96,14 +105,26 @@ def main():
 
         print(f"{time.ctime()} \tExample {nb_done} has MIP setup.")
         sat, solution, nb_visited_states = mip_network.solve(domain)
+        end = time.time()
+
+
         if sat is False:
             print(f"{time.ctime()} \tExample {nb_done} is Robust.")
+            with open(example_res_file, 'w') as res_file:
+                res_file.write('Robust\n')
+                res_file.write(f'{end-start}\n')
         else:
             print(f"{time.ctime()} \tExample {nb_done} is not Robust.")
             adv_example = Variable(solution[0].view(1, -1))
             pred_on_adv = test_net(adv_example)
             print(f"{time.ctime()} \tPredictions: {pred_on_adv.data}")
-            print(f"{time.ctime()} \tGT is: {target.data}")
+            print(f"{time.ctime()} \tGT is: {target}")
+            with open(example_res_file, 'w') as res_file:
+                res_file.write('NonRobust\n')
+                res_file.write(f'{end-start}\n')
+                res_file.write(f'Input: {solution[0]}\n')
+                res_file.write(f'Pred on adv: {pred_on_adv.data}\n')
+                res_file.write(f'GT is : {target}\n')
 
         print("\n\n")
         nb_done += 1
