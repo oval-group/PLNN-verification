@@ -41,29 +41,93 @@ def main():
 
     test_net = nn.Sequential(*layers)
     test_net.eval()
-    with open(verif_result_folder + '/incorrect_ids.txt', 'w') as inc_ids:
-        correct = 0
-        for sample_idx, (data, target) in enumerate(test_loader):
-            var_data = Variable(data.float().view(-1, 28*28)/255.0, volatile=True)
-            output = test_net(var_data)
-            pred = output.data.max(1, keepdim=True)[1]
-            correct += pred.eq(target.view_as(pred)).sum()
-            if pred[0][0] != target[0]:
-                inc_ids.write(f'{sample_idx}\n')
+    # with open(verif_result_folder + '/incorrect_ids.txt', 'w') as inc_ids:
+    #     correct = 0
+    #     for sample_idx, (data, target) in enumerate(test_loader):
+    #         var_data = Variable(data.float().view(-1, 28*28)/255.0, volatile=True)
+    #         output = test_net(var_data)
+    #         pred = output.data.max(1, keepdim=True)[1]
+    #         correct += pred.eq(target.view_as(pred)).sum()
+    #         if pred[0][0] != target[0]:
+    #             inc_ids.write(f'{sample_idx}\n')
 
-    accuracy = 100 * correct / len(test_loader.dataset)
+    # accuracy = 100 * correct / len(test_loader.dataset)
 
-    print(f"Nominal accuracy on MNIST test set: {accuracy} %")
+    # print(f"Nominal accuracy on MNIST test set: {accuracy} %")
 
     test_loader = torch.utils.data.DataLoader(
         torch.utils.data.TensorDataset(mnist_test.test_data, mnist_test.test_labels),
         batch_size=1, shuffle=False
     )
+    # #### DEBUG
+    # # with open(verif_result_folder + '/incorrect_ids.txt', 'r') as inc_ids:
+    # #     all_inc_ids = []
+    # #     for inc_id in inc_ids.readlines():
+    # #         all_inc_ids.append(int(inc_id))
+    # all_inc_ids = [951]
+
+    # for inc_id in all_inc_ids:
+    #     ex_idx = inc_id
+    #     print(f"Dealing with example {ex_idx}")
+    #     inp = mnist_test.test_data[ex_idx]
+    #     label = mnist_test.test_labels[ex_idx]
+    #     var_data = Variable(inp.float().view(-1, 28*28)/255.0, volatile=True)
+    #     output = test_net(var_data)
+    #     _, pred = output.data.max(1, keepdim=True)
+    #     print(f"Output is {output}")
+    #     print(f"Prediction is {pred[0][0]}")
+    #     print(f"Target is {label}")
+
+
+    #     net_layers = layers
+    #     data = mnist_test.test_data[ex_idx]
+    #     data_lb = data.float().view(28*28)/255.0 - args.adv_perturb
+    #     data_ub = data.float().view(28*28)/255.0 + args.adv_perturb
+    #     domain = torch.clamp(torch.stack((data_lb, data_ub), dim=1),
+    #                              min=0, max=1)
+
+    #     neg_layer = nn.Linear(1, 1)
+    #     neg_layer.weight.data.fill_(-1)
+    #     neg_layer.bias.data.fill_(0)
+
+    #     additional_lin_layer = nn.Linear(10, 9, bias=True)
+    #     lin_weights = additional_lin_layer.weight.data
+    #     lin_weights.fill_(0)
+    #     lin_bias = additional_lin_layer.bias.data
+    #     lin_bias.fill_(0)
+    #     to = 0
+    #     gt = label
+    #     for cls in range(10):
+    #         if cls != gt:
+    #             lin_weights[to, cls] = 1
+    #             lin_weights[to, gt] = -1
+    #             to += 1
+
+    #     verif_layers = layers + [additional_lin_layer,
+    #                              View((1, 9)),
+    #                              nn.MaxPool1d(9),
+    #                              View((1,)),
+    #                              neg_layer]
+
+    #     artificial_net = nn.Sequential(*verif_layers)
+    #     artificial_net.eval()
+    #     art_output = artificial_net(var_data)
+    #     print(f"\nTo prove net output is {art_output}")
+    #     mip_network = MIPNetwork(verif_layers)
+    #     mip_network.setup_model(domain,
+    #                             sym_bounds=args.sym_bounds,
+    #                             use_obj_function=args.use_obj_function,
+    #                             interval_analysis=args.interval_analysis)
+
+    #     sat, solution, nb_visited_states = mip_network.solve(domain)
+    #     import IPython; IPython.embed();
+    #     import sys; sys.exit()
+    #     print(f"Counterexample search for example {ex_idx}: satResult is {sat}\n\n")
+    # #### END DEBUG
 
     neg_layer = nn.Linear(1, 1)
     neg_layer.weight.data.fill_(-1)
     neg_layer.bias.data.fill_(0)
-
     nb_done = 0
     for data, target in test_loader:
         if args.modulo is not None:
