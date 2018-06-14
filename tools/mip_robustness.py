@@ -22,10 +22,13 @@ def main():
     parser.add_argument('--sym_bounds', action='store_true')
     parser.add_argument('--use_obj_function', action='store_true')
     parser.add_argument('--interval-analysis', action='store_true')
+    parser.add_argument('--modulo', type=int)
+    parser.add_argument('--modulo_arg', type=int)
     args = parser.parse_args()
 
     layers = load_mat_network(args.mat_infile)
 
+    verif_result_folder = 'weights/verif_result'
     mnist_data = 'weights/mnistData/'
     mnist_test = torchvision.datasets.MNIST(mnist_data,
                                             train=False,
@@ -33,21 +36,24 @@ def main():
 
     test_loader = torch.utils.data.DataLoader(
         torch.utils.data.TensorDataset(mnist_test.test_data, mnist_test.test_labels),
-        batch_size=512, shuffle=False
+        batch_size=1, shuffle=False
     )
 
     test_net = nn.Sequential(*layers)
     test_net.eval()
+    with open(verif_result_folder + '/incorrect_ids.txt', 'w') as inc_ids:
+        correct = 0
+        for sample_idx, (data, target) in enumerate(test_loader):
+            var_data = Variable(data.float().view(-1, 28*28)/255.0, volatile=True)
+            output = test_net(var_data)
+            pred = output.data.max(1, keepdim=True)[1]
+            correct += pred.eq(target.view_as(pred)).sum()
+            if pred[0][0] != target[0]:
+                inc_ids.write(f'{sample_idx}\n')
 
-    # correct = 0
-    # for data, target in test_loader:
-    #     var_data = Variable(data.float().view(-1, 28*28)/255.0, volatile=True)
-    #     output = test_net(var_data)
-    #     pred = output.data.max(1, keepdim=True)[1]
-    #     correct += pred.eq(target.view_as(pred)).sum()
-    # accuracy = 100 * correct / len(test_loader.dataset)
-    #
-    # print(f"Nominal accuracy on MNIST test set: {accuracy} %")
+    accuracy = 100 * correct / len(test_loader.dataset)
+
+    print(f"Nominal accuracy on MNIST test set: {accuracy} %")
 
     test_loader = torch.utils.data.DataLoader(
         torch.utils.data.TensorDataset(mnist_test.test_data, mnist_test.test_labels),
@@ -59,8 +65,13 @@ def main():
     neg_layer.bias.data.fill_(0)
 
     nb_done = 0
-    verif_result_folder = 'weights/verif_result'
     for data, target in test_loader:
+        if args.modulo is not None:
+            if nb_done % args.modulo != args.modulo_arg:
+                nb_done += 1
+                continue
+
+
         example_res_file = verif_result_folder + f"/{nb_done}_sample.txt"
         if os.path.isfile(example_res_file):
             nb_done += 1
