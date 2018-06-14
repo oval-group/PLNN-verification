@@ -276,14 +276,16 @@ class MIPNetwork:
                         pre_ub = M
 
                     if pre_lb <= 0 and pre_ub <=0:
-                        x = self.model.addVar(lb=0, ub=0,
-                                              vtype=grb.GRB.CONTINUOUS,
-                                              name = f'ReLU_x_{layer_idx}_{neuron_idx}')
+                        # x = self.model.addVar(lb=0, ub=0,
+                        #                       vtype=grb.GRB.CONTINUOUS,
+                        #                       name = f'ReLU_x_{layer_idx}_{neuron_idx}')
+                        x = 0
                     elif (pre_lb >= 0) and (pre_ub >= 0):
-                        x = self.model.addVar(lb=pre_lb, ub=pre_ub,
-                                              vtype=grb.GRB.CONTINUOUS,
-                                              name = f'ReLU_x_{layer_idx}_{neuron_idx}')
-                        self.model.addConstr(x == pre_var, f'constr_{layer_idx}_{neuron_idx}_fixedpassing')
+                        # x = self.model.addVar(lb=pre_lb, ub=pre_ub,
+                        #                       vtype=grb.GRB.CONTINUOUS,
+                        #                       name = f'ReLU_x_{layer_idx}_{neuron_idx}')
+                        # self.model.addConstr(x == pre_var, f'constr_{layer_idx}_{neuron_idx}_fixedpassing')
+                        x = pre_var
                     else:
                         x = self.model.addVar(lb=0,
                                               ub=grb.GRB.INFINITY,
