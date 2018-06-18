@@ -41,6 +41,8 @@ def main():
         verif_result_folder = f'weights/{args.dataset}_verif_result'
     else:
         verif_result_folder = args.result_folder
+    if not os.path.exists(verif_result_folder):
+        os.makedirs(verif_result_folder)
 
     if args.dataset == 'mnist':
         mnist_data = 'weights/mnistData/'
@@ -225,12 +227,14 @@ def main():
             pred_on_adv = test_net(adv_example)
             print(f"{time.ctime()} \tPredictions: {pred_on_adv.data}")
             print(f"{time.ctime()} \tGT is: {target}")
-            with open(example_res_file, 'w') as res_file:
+            with open(example_res_file, 'w', encoding='utf-8') as res_file:
                 res_file.write('NonRobust\n')
                 res_file.write(f'{end-start}\n')
-                res_file.write(f'Input: {solution[0]}\n')
+                sol_str = f'Input: {solution[0]}\n'
+                res_file.write(sol_str)
                 res_file.write(f'Pred on adv: {pred_on_adv.data}\n')
-                res_file.write(f'GT is : {target}\n')
+                gt_str = f'GT is : {target[0]}\n'
+                res_file.write(gt_str)
         elif sat is None:
             print(f"{time.ctime()} \t Example {sp_idx} failure.")
             with open(example_res_file, 'w') as res_file:
