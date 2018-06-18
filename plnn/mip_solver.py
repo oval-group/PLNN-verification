@@ -20,7 +20,7 @@ class MIPNetwork:
         # upper bounds at each layer.
         self.lin_net = LinearizedNetwork(layers)
 
-    def solve(self, inp_domain):
+    def solve(self, inp_domain, timeout=None):
         '''
         inp_domain: Tensor containing in each row the lower and upper bound
                     for the corresponding dimension
@@ -29,10 +29,14 @@ class MIPNetwork:
         sat     : boolean indicating whether the MIP is satisfiable.
         solution: Feasible point if the MIP is satisfiable,
                   None otherwise.
+        timeout : Maximum allowed time to run, if is not None
         '''
         if self.lower_bounds[-1][0] > 0:
             # The problem is infeasible, and we haven't setup the MIP
             return (False, None, 0)
+
+        if timeout is not None:
+            self.model.setParam('TimeLimit', timeout)
 
         if self.check_obj_value_callback:
             def early_stop_cb(model, where):
@@ -100,6 +104,9 @@ class MIPNetwork:
                     inp[idx] = var.x
                 optim_val = self.gurobi_vars[-1][-1].x
             return (optim_val < 0, (inp, optim_val), nb_visited_states)
+        elif self.model.status is grb.GRB.TIME_LIMIT:
+            # We timed out, return a None Status
+            return (None, None, nb_visited_states)
         else:
             raise Exception("Unexpected Status code")
 
