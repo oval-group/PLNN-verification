@@ -33,6 +33,7 @@ def main():
                         default='mnist', choices=['mnist', 'cifar10'])
     parser.add_argument('--result_folder', type=str,
                         help='Where to store the results of the verification')
+    parser.add_argument('--dump_images', action='store_true')
     args = parser.parse_args()
 
     layers = load_mat_network(args.mat_infile)
@@ -235,6 +236,15 @@ def main():
                 res_file.write(f'Pred on adv: {pred_on_adv.data}\n')
                 gt_str = f'GT is : {target[0]}\n'
                 res_file.write(gt_str)
+
+            if args.dump_images is True:
+                orig_data = data.view(28, 28)
+                adv_data = solution[0].view(28, 28)
+
+                orig_path = verif_result_folder + f"/{sp_idx}_original.png"
+                adv_path = verif_result_folder + f"/{sp_idx}_adversarial.png"
+                torchvision.utils.save_image(orig_data, orig_path)
+                torchvision.utils.save_image(adv_data, adv_path)
         elif sat is None:
             print(f"{time.ctime()} \t Example {sp_idx} failure.")
             with open(example_res_file, 'w') as res_file:
