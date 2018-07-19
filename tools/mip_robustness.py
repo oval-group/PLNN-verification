@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+import json
 import os
 import time
 import torch
@@ -224,7 +225,7 @@ def main():
                 res_file.write(f'{end-start}\n')
         elif sat is True:
             print(f"{time.ctime()} \tExample {sp_idx} is not Robust.")
-            adv_example = Variable(solution[0].view(1, -1))
+            adv_example = Variable(solution[0].view(1, -1), volatile=True)
             pred_on_adv = test_net(adv_example)
             print(f"{time.ctime()} \tPredictions: {pred_on_adv.data}")
             print(f"{time.ctime()} \tGT is: {target}")
@@ -237,7 +238,21 @@ def main():
                 gt_str = f'GT is : {target[0]}\n'
                 res_file.write(gt_str)
 
+
             if args.dump_images is True:
+                # Map the plot between the nominal sample and the adversarial
+                var_data = Variable(data, volatile=True)
+                nom_to_adv = adv_example - var_data
+                steps = Variable(torch.arange(0, 1, step=1.0/1000).view(-1, 1),volatile=True)
+                all_on_path = var_data + torch.matmul(steps, nom_to_adv)
+
+                all_preds_on_path = test_net(all_on_path)
+                py_all_preds = all_preds_on_path.data.numpy().tolist()
+                preds_path = verif_result_folder + f"/{sp_idx}_vals.json"
+                with open(preds_path, 'w') as preds_file:
+                  json.dump(py_all_preds, preds_file)
+
+                # Generate the images to save
                 orig_data = data.view(28, 28)
                 adv_data = solution[0].view(28, 28)
 
