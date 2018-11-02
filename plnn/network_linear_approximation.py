@@ -83,47 +83,47 @@ class LinearizedNetwork:
 
         inps = (domain_lb + domain_width * rand_samples)
 
+        with torch.enable_grad():
+            batch_ub = float('inf')
+            for i in range(1000):
+                prev_batch_best = batch_ub
 
-        batch_ub = float('inf')
-        for i in range(1000):
-            prev_batch_best = batch_ub
+                self.net.zero_grad()
+                if inps.grad is not None:
+                    inps.grad.zero_()
+                inps = inps.detach().requires_grad_()
+                out = self.net(inps)
 
-            self.net.zero_grad()
-            if inps.grad is not None:
-                inps.grad.zero_()
-            inps = inps.detach().requires_grad_()
-            out = self.net(inps)
+                batch_ub = out.min().item()
+                if batch_ub < best_ub:
+                    best_ub = batch_ub
+                    # print(f"New best lb: {best_lb}")
+                    _, idx = out.min(dim=0)
+                    best_ub_inp = inps[idx[0]]
 
-            batch_ub = out.min().item()
-            if batch_ub < best_ub:
-                best_ub = batch_ub
-                # print(f"New best lb: {best_lb}")
-                _, idx = out.min(dim=0)
-                best_ub_inp = inps[idx[0]]
+                if batch_ub >= prev_batch_best:
+                    break
 
-            if batch_ub >= prev_batch_best:
-                break
+                all_samp_sum = out.sum() / nb_samples
+                all_samp_sum.backward()
+                grad = inps.grad
 
-            all_samp_sum = out.sum() / nb_samples
-            all_samp_sum.backward()
-            grad = inps.grad
+                max_grad, _ = grad.max(dim=0)
+                min_grad, _ = grad.min(dim=0)
+                grad_diff = max_grad - min_grad
 
-            max_grad, _ = grad.max(dim=0)
-            min_grad, _ = grad.min(dim=0)
-            grad_diff = max_grad - min_grad
+                lr = 1e-2 * domain_width / grad_diff
+                min_lr = lr.min()
 
-            lr = 1e-2 * domain_width / grad_diff
-            min_lr = lr.min()
+                step = -min_lr*grad
+                inps = inps + step
 
-            step = -min_lr*grad
-            inps = inps + step
-
-            inps = torch.max(inps, domain_lb)
-            inps = torch.min(inps, domain_ub)
+                inps = torch.max(inps, domain_lb)
+                inps = torch.min(inps, domain_ub)
 
         return best_ub_inp, best_ub
 
-    get_upper_bound = get_upper_bound_pgd
+    get_upper_bound = get_upper_bound_random
 
     def get_lower_bound(self, domain):
         '''

@@ -37,7 +37,13 @@ class CandidateDomain:
         dom_area = dom_sides.prod()
         return dom_area
 
+def no_grad(f):
+    def g(*args, **kwargs):
+        with torch.no_grad():
+            return f(*args, **kwargs)
+    return g
 
+@no_grad
 def bab(net, domain, eps=1e-3, decision_bound=None, smart_branching=None):
     '''
     Uses branch and bound algorithm to evaluate the global minimum
@@ -53,6 +59,8 @@ def bab(net, domain, eps=1e-3, decision_bound=None, smart_branching=None):
     Returns         : Lower bound and Upper bound on the global minimum,
                       as well as the point where the upper bound is achieved
     '''
+
+
     nb_visited_states = 0
     global_ub_point, global_ub = net.get_upper_bound(domain)
     global_lb = net.get_lower_bound(domain)
