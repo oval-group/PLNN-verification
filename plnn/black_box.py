@@ -184,7 +184,6 @@ class BlackBoxNetwork:
             self.model.setObjective(0, grb.GRB.MAXIMIZE)
             self.check_obj_value_callback = False
         else:
-            self.model.addConstr(self.gurobi_vars[-1][-1] <= 0)
             self.model.setObjective(self.gurobi_vars[-1][-1], grb.GRB.MINIMIZE)
             self.check_obj_value_callback = True
 
