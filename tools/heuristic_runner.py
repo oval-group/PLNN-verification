@@ -22,11 +22,9 @@ def main():
     network, domain = load_and_simplify(args.rlv_infile,
                                         HeuristicNetwork)
 
-    sat, (sol_inp, sol_val), nb_samples = network.guess_lower_bound(domain,
-                                                                    args.timeout,
-                                                                    args.noprogress_timeout,
-                                                                    early_stop=True,
-                                                                    use_cuda=args.use_cuda)
+    sat, (sol_inp, sol_val), nb_samples = network.guess_lower_bound(
+        domain, args.timeout, args.noprogress_timeout,
+        early_stop=False, use_cuda=args.use_cuda)
 
     if sat:
         print("SAT")
@@ -38,5 +36,7 @@ def main():
         print(sol_val)
 
     print(f"Nb samples: {nb_samples}")
+
+
 if __name__ == '__main__':
     main()

@@ -5,7 +5,6 @@ from torch import nn
 from plnn.modules import View
 from plnn.network_linear_approximation import LinearizedNetwork
 
-from torch.autograd import Variable
 
 class MIPNetwork:
 
@@ -53,9 +52,9 @@ class MIPNetwork:
                         # Check it with the network
                         input_vals = model.cbGetSolution(self.gurobi_vars[0])
 
-                        inps = Variable(torch.Tensor(input_vals).view(1, -1),
-                                        volatile=True)
-                        out = self.net(inps).data[0, 0]
+                        with torch.no_grad():
+                            inps = torch.Tensor(input_vals).view(1, -1)
+                            out = self.net(inps).squeeze().item()
 
                         if out < 0:
                             model.terminate()
@@ -118,8 +117,8 @@ class MIPNetwork:
         inp_lb = []
         inp_ub = []
         for dim, (lb, ub) in enumerate(inp_domain):
-            inp_lb.append(lb)
-            inp_ub.append(ub)
+            inp_lb.append(lb.item())
+            inp_ub.append(ub.item())
         self.lower_bounds.append(inp_lb)
         self.upper_bounds.append(inp_ub)
 
@@ -129,10 +128,10 @@ class MIPNetwork:
             new_layer_ub = []
             if type(layer) is nn.Linear:
                 for neuron_idx in range(layer.weight.size(0)):
-                    ub = layer.bias.data[neuron_idx]
-                    lb = layer.bias.data[neuron_idx]
+                    ub = layer.bias[neuron_idx].item()
+                    lb = layer.bias[neuron_idx].item()
                     for prev_neuron_idx in range(layer.weight.size(1)):
-                        coeff = layer.weight.data[neuron_idx, prev_neuron_idx]
+                        coeff = layer.weight[neuron_idx, prev_neuron_idx].item()
                         if coeff >= 0:
                             ub += coeff * self.upper_bounds[-1][prev_neuron_idx]
                             lb += coeff * self.lower_bounds[-1][prev_neuron_idx]
@@ -238,9 +237,9 @@ class MIPNetwork:
             if type(layer) is nn.Linear:
                 for neuron_idx in range(layer.weight.size(0)):
 
-                    lin_expr = layer.bias.data[neuron_idx]
+                    lin_expr = layer.bias[neuron_idx].item()
                     for prev_neuron_idx in range(layer.weight.size(1)):
-                        coeff = layer.weight.data[neuron_idx, prev_neuron_idx]
+                        coeff = layer.weight[neuron_idx, prev_neuron_idx].item()
                         lin_expr += coeff * self.gurobi_vars[-1][prev_neuron_idx]
                     v = self.model.addVar(lb=-grb.GRB.INFINITY,
                                           ub=grb.GRB.INFINITY,

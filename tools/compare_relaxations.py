@@ -7,7 +7,6 @@ import torch
 from plnn.branch_and_bound import box_split
 from plnn.model import load_and_simplify
 from plnn.network_linear_approximation import LinearizedNetwork
-from torch.autograd import Variable
 from timeit import default_timer as timer
 
 font = {'size': 26}

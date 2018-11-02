@@ -25,9 +25,9 @@ def main():
         print("UNSAT")
     else:
         # Verify that it is a valid solution
-        candidate_ctx = Variable(solution[0].view(1, -1))
+        candidate_ctx = solution[0].view(1, -1)
         val = bb_network.net(candidate_ctx)
-        margin = val.squeeze().data[0]
+        margin = val.squeeze().data.item()
         if margin > 0:
             print("Error")
         else:

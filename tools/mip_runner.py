@@ -34,7 +34,7 @@ def main():
         # Verify that it is a valid solution
         candidate_ctx = Variable(solution[0].view(1,-1))
         val = mip_network.net(candidate_ctx)
-        margin = val.squeeze().data[0]
+        margin = val.squeeze().item()
         if margin > 0:
             print("Error")
         else:

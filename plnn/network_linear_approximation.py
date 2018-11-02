@@ -4,8 +4,6 @@ import torch
 
 from plnn.modules import View
 from torch import nn
-from torch.autograd import Variable
-
 
 class LinearizedNetwork:
 
@@ -15,6 +13,9 @@ class LinearizedNetwork:
         '''
         self.layers = layers
         self.net = nn.Sequential(*layers)
+        # Skip all gradient computation for the weights of the Net
+        for param in self.net.parameters():
+            param.requires_grad = False
 
     def remove_maxpools(self, domain):
         from plnn.model import reluify_maxpool, simplify_network
@@ -44,15 +45,14 @@ class LinearizedNetwork:
         domain_lb = domain_lb.view(1, nb_inp).expand(nb_samples, nb_inp)
         domain_width = domain_width.view(1, nb_inp).expand(nb_samples, nb_inp)
 
-        inps = domain_lb + domain_width * rand_samples
+        with torch.no_grad():
+            inps = domain_lb + domain_width * rand_samples
+            outs = self.net(inps)
 
-        var_inps = Variable(inps, volatile=True)
-        outs = self.net(var_inps)
+            upper_bound, idx = torch.min(outs, dim=0)
 
-        upper_bound, idx = torch.min(outs.data, dim=0)
-
-        upper_bound = upper_bound[0]
-        ub_point = inps[idx].squeeze()
+            upper_bound = upper_bound[0].item()
+            ub_point = inps[idx].squeeze()
 
         return ub_point, upper_bound
 
@@ -81,20 +81,24 @@ class LinearizedNetwork:
         domain_lb = domain_lb.view(1, nb_inp).expand(nb_samples, nb_inp)
         domain_width = domain_width.view(1, nb_inp).expand(nb_samples, nb_inp)
 
-        inps = domain_lb + domain_width * rand_samples
+        inps = (domain_lb + domain_width * rand_samples)
+
 
         batch_ub = float('inf')
         for i in range(1000):
             prev_batch_best = batch_ub
 
-            var_inps = Variable(inps, requires_grad=True)
-            out = self.net(var_inps)
+            self.net.zero_grad()
+            if inps.grad is not None:
+                inps.grad.zero_()
+            inps = inps.detach().requires_grad_()
+            out = self.net(inps)
 
-            batch_ub = out.data.min()
+            batch_ub = out.min().item()
             if batch_ub < best_ub:
                 best_ub = batch_ub
                 # print(f"New best lb: {best_lb}")
-                val, idx = out.data.min(dim=0)
+                _, idx = out.min(dim=0)
                 best_ub_inp = inps[idx[0]]
 
             if batch_ub >= prev_batch_best:
@@ -102,7 +106,7 @@ class LinearizedNetwork:
 
             all_samp_sum = out.sum() / nb_samples
             all_samp_sum.backward()
-            grad = var_inps.grad.data
+            grad = inps.grad
 
             max_grad, _ = grad.max(dim=0)
             min_grad, _ = grad.min(dim=0)
@@ -112,14 +116,14 @@ class LinearizedNetwork:
             min_lr = lr.min()
 
             step = -min_lr*grad
-            inps += step
+            inps = inps + step
 
             inps = torch.max(inps, domain_lb)
             inps = torch.min(inps, domain_ub)
 
         return best_ub_inp, best_ub
 
-    get_upper_bound = get_upper_bound_random
+    get_upper_bound = get_upper_bound_pgd
 
     def get_lower_bound(self, domain):
         '''
@@ -199,11 +203,11 @@ class LinearizedNetwork:
             new_layer_gurobi_vars = []
             if type(layer) is nn.Linear:
                 for neuron_idx in range(layer.weight.size(0)):
-                    ub = layer.bias.data[neuron_idx]
-                    lb = layer.bias.data[neuron_idx]
-                    lin_expr = layer.bias.data[neuron_idx]
+                    ub = layer.bias[neuron_idx].item()
+                    lb = layer.bias[neuron_idx].item()
+                    lin_expr = layer.bias[neuron_idx].item()
                     for prev_neuron_idx in range(layer.weight.size(1)):
-                        coeff = layer.weight.data[neuron_idx, prev_neuron_idx]
+                        coeff = layer.weight[neuron_idx, prev_neuron_idx].item()
                         if coeff >= 0:
                             ub += coeff*self.upper_bounds[-1][prev_neuron_idx]
                             lb += coeff*self.lower_bounds[-1][prev_neuron_idx]
@@ -417,11 +421,11 @@ class AssumptionLinearizedNetwork(LinearizedNetwork):
             new_layer_gurobi_vars = []
             if type(layer) is nn.Linear:
                 for neuron_idx in range(layer.weight.size(0)):
-                    ub = layer.bias.data[neuron_idx]
-                    lb = layer.bias.data[neuron_idx]
-                    lin_expr = layer.bias.data[neuron_idx]
+                    ub = layer.bias[neuron_idx].item()
+                    lb = layer.bias[neuron_idx].item()
+                    lin_expr = layer.bias[neuron_idx].item()
                     for prev_neuron_idx in range(layer.weight.size(1)):
-                        coeff = layer.weight.data[neuron_idx, prev_neuron_idx]
+                        coeff = layer.weight[neuron_idx, prev_neuron_idx].item()
                         if coeff >= 0:
                             ub += coeff*self.upper_bounds[-1][prev_neuron_idx]
                             lb += coeff*self.lower_bounds[-1][prev_neuron_idx]

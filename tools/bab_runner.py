@@ -5,8 +5,6 @@ from plnn.branch_and_bound import bab
 from plnn.network_linear_approximation import LinearizedNetwork
 from plnn.dual_network_linear_approximation import LooseDualNetworkApproximation
 from plnn.model import load_and_simplify
-from torch.autograd import Variable
-
 
 def main():
     parser = argparse.ArgumentParser(description="Read a .rlv file"
@@ -42,9 +40,9 @@ def main():
         print("UNSAT")
     elif min_ub < 0:
         # Verify that it is a valid solution
-        candidate_ctx = Variable(ub_point.view(1,-1))
+        candidate_ctx = ub_point.view(1,-1)
         val = network.net(candidate_ctx)
-        margin = val.squeeze().data[0]
+        margin = val.squeeze().item()
         if margin > 0:
             print("Error")
         else:

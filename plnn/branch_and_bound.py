@@ -192,8 +192,8 @@ def box_split(domain):
     edgelength, dim = torch.max(diff, 0)
 
     # Unwrap from tensor containers
-    edgelength = edgelength[0]
-    dim = dim[0]
+    edgelength = edgelength.item()
+    dim = dim.item()
 
     # Now split over dimension dim:
     half_length = edgelength/2

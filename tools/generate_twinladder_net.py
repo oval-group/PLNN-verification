@@ -24,11 +24,9 @@ def assert_network_greater_than(net, domain, min_theoretical):
 
     inps = domain_lb + domain_width * rand_samples
 
-    var_inps = torch.autograd.Variable(inps, volatile=True)
+    outs = net(inps)
 
-    outs = net(var_inps)
-
-    min_out = outs.data.min()
+    min_out = outs.min()
     assert min_out > min_theoretical - error_tol, "Ladder network not correct"
 
 def generate_network(ladder_dimension, margin):
@@ -62,8 +60,8 @@ def generate_network(ladder_dimension, margin):
     twin_net_layers = []
     # Add a linear layer duplicating the input
     dup_layer = nn.Linear(nb_inputs, 2* nb_inputs)
-    dup_weight = dup_layer.weight.data
-    dup_bias = dup_layer.bias.data
+    dup_weight = dup_layer.weight
+    dup_bias = dup_layer.bias
     dup_weight.zero_()
     dup_bias.zero_()
     dup_weight[:nb_inputs, :] = torch.eye(nb_inputs)
@@ -77,14 +75,14 @@ def generate_network(ladder_dimension, margin):
         nb_in = stream_lay.in_features
         nb_out = stream_lay.out_features
         twin_lay = nn.Linear(2*nb_in, 2*nb_out, bias=True)
-        twin_lay_weight = twin_lay.weight.data
-        twin_lay_bias = twin_lay.bias.data
+        twin_lay_weight = twin_lay.weight
+        twin_lay_bias = twin_lay.bias
         twin_lay_weight.zero_()
 
-        twin_lay_weight[:nb_out, :nb_in].copy_(stream_lay.weight.data)
-        twin_lay_weight[-nb_out:, -nb_in:].copy_(stream_lay.weight.data)
-        twin_lay_bias[:nb_out].copy_(stream_lay.bias.data)
-        twin_lay_bias[-nb_out:].copy_(stream_lay.bias.data)
+        twin_lay_weight[:nb_out, :nb_in].copy_(stream_lay.weight)
+        twin_lay_weight[-nb_out:, -nb_in:].copy_(stream_lay.weight)
+        twin_lay_bias[:nb_out].copy_(stream_lay.bias)
+        twin_lay_bias[-nb_out:].copy_(stream_lay.bias)
 
         twin_net_layers.append(twin_lay)
         twin_net_layers.append(nn.ReLU())
@@ -94,9 +92,9 @@ def generate_network(ladder_dimension, margin):
     del twin_net_layers[-1]
     # Create the final linear layers that merge the two streams back
     closing_layer = nn.Linear(prev_size, 1, bias=True)
-    closing_layer.bias.data.fill_(margin)
-    closing_layer.weight.data[0, :nb_stream_out].fill_(1)
-    closing_layer.weight.data[0, -nb_stream_out:].fill_(-1)
+    closing_layer.bias.fill_(margin)
+    closing_layer.weight[0, :nb_stream_out].fill_(1)
+    closing_layer.weight[0, -nb_stream_out:].fill_(-1)
 
     twin_net_layers.append(closing_layer)
 

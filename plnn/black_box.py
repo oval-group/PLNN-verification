@@ -5,8 +5,6 @@ from torch import nn
 from plnn.modules import View
 from plnn.network_linear_approximation import LinearizedNetwork
 
-from torch.autograd import Variable
-
 class BlackBoxNetwork:
 
     def __init__(self, layers):
@@ -47,9 +45,9 @@ class BlackBoxNetwork:
                         # Check it with the network
                         input_vals = model.cbGetSolution(self.gurobi_vars[0])
 
-                        inps = Variable(torch.Tensor(input_vals).view(1, -1),
-                                        volatile=True)
-                        out = self.net(inps).data[0, 0]
+                        with torch.no_grad():
+                            inps = torch.Tensor(input_vals).view(1, -1)
+                            out = self.net(inps).item()
 
                         if out < 0:
                             model.terminate()
@@ -117,9 +115,9 @@ class BlackBoxNetwork:
             if type(layer) is nn.Linear:
                 for neuron_idx in range(layer.weight.size(0)):
 
-                    lin_expr = layer.bias.data[neuron_idx]
+                    lin_expr = layer.bias[neuron_idx].item()
                     for prev_neuron_idx in range(layer.weight.size(1)):
-                        coeff = layer.weight.data[neuron_idx, prev_neuron_idx]
+                        coeff = layer.weight[neuron_idx, prev_neuron_idx].item()
                         lin_expr += coeff * self.gurobi_vars[-1][prev_neuron_idx]
                     v = self.model.addVar(lb=-grb.GRB.INFINITY,
                                           ub=grb.GRB.INFINITY,
