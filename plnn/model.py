@@ -673,7 +673,7 @@ def dump_rlv(rlv_outfile, layers, domain, transform_maxpool=False):
 
     if transform_maxpool:
         new_layers = simplify_network(layers)
-        new_layers = reluify_maxpool(layers, domain)
+        new_layers = reluify_maxpool(new_layers, domain)
         new_layers = simplify_network(new_layers)
 
         max_net = nn.Sequential(*layers)
@@ -831,11 +831,10 @@ def assert_network_equivalence(net1, net2, domain):
 
     inps = domain_lb + domain_width * rand_samples
 
-    var_inps = torch.autograd.Variable(inps, volatile=True)
+    with torch.no_grad():
+        net1_out = net1(inps)
+        net2_out = net2(inps)
+        diff = net1_out - net2_out
+        max_diff = torch.abs(diff).max()
 
-    net1_out = net1(var_inps)
-    net2_out = net2(var_inps)
-
-    diff = net1_out.data - net2_out.data
-    max_diff = torch.abs(diff).max()
     assert max_diff <= 1e-8, "The network rewrite is incorrect"
