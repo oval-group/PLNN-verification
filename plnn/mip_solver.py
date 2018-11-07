@@ -238,7 +238,7 @@ class MIPNetwork:
                     lin_expr = layer.bias[neuron_idx].item()
                     for prev_neuron_idx_ten in torch.nonzero(layer.weight[neuron_idx]):
                         prev_neuron_idx = prev_neuron_idx_ten[0]
-                        coeff = layer.weight.data[neuron_idx, prev_neuron_idx]
+                        coeff = layer.weight[neuron_idx, prev_neuron_idx].item()
                         lin_expr += coeff * self.gurobi_vars[-1][prev_neuron_idx]
                     v = self.model.addVar(lb=-grb.GRB.INFINITY,
                                           ub=grb.GRB.INFINITY,
