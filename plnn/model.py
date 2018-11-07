@@ -2,7 +2,6 @@ import math
 import scipy.io
 import torch
 
-
 from collections import Counter, defaultdict
 from plnn.modules import View
 from plnn.network_linear_approximation import LinearizedNetwork
@@ -581,21 +580,39 @@ def load_mat_network(mat_file):
     return all_layers
 
 
-def reluify_maxpool(layers, domain):
+def reluify_maxpool(layers, domain, no_opt=False):
     '''
     Remove all the Maxpool units of a feedforward network represented by
     `layers` and replace them by an equivalent combination of ReLU + Linear
 
     This is only valid over the domain `domain` because we use some knowledge
     about upper and lower bounds of certain neurons
+
+    Args:
+      no_opt: Boolean. If set to True, don't optimize the bounds to convert the
+              maxpool into ReLU and use interval_analysis. If set to False, will
+              use the tight optimized bounds.
     '''
-    # We will need some lower bounds for the inputs to the maxpooling
-    # We will simply use those given by a LinearizedNetwork
-    lin_net = LinearizedNetwork(layers)
-    lin_net.define_linear_approximation(domain)
+    if no_opt:
+        # We're building a MIPNetwork but we are not going to solve it. This is just
+        # because this is the class that has the code for interval_analysis
+
+        # TODO: Importing here sucks but avoiding it and importing at the top level
+        # would mean a larger refactoring that I'm willing to do right now.
+        from plnn.mip_solver import MIPNetwork
+
+        mip_net = MIPNetwork(layers)
+        mip_net.do_interval_analysis(domain)
+        lbs = mip_net.lower_bounds
+    else:
+        # We will need some lower bounds for the inputs to the maxpooling
+        # We will simply use those given by a LinearizedNetwork
+        lin_net = LinearizedNetwork(layers)
+        lin_net.define_linear_approximation(domain)
+        lbs = lin_net.lower_bounds
 
     layers = layers[:]
-    lbs = lin_net.lower_bounds
+
     new_all_layers = []
 
     idx_of_inp_lbs = 0

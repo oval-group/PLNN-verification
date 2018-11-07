@@ -3,8 +3,8 @@ import torch
 
 from torch import nn
 from plnn.modules import View
+from plnn.dual_network_linear_approximation import LooseDualNetworkApproximation
 from plnn.network_linear_approximation import LinearizedNetwork
-
 
 class MIPNetwork:
 
@@ -181,7 +181,7 @@ class MIPNetwork:
     def setup_model(self, inp_domain,
                     sym_bounds=False,
                     use_obj_function=False,
-                    interval_analysis=False,
+                    bounds="opt",
                     parameter_file=None):
         '''
         inp_domain: Tensor containing in each row the lower and upper bound
@@ -190,28 +190,63 @@ class MIPNetwork:
         optimal: If False, don't use any objective function, simply add a constraint on the output
                  If True, perform optimization and use callback to interrupt the solving when a
                           counterexample is found
-        interval_analysis: Boolean, indicating whether interval analysis should be used
-                           instead of the planet relaxation to obtain bounds
+        bounds: string, indicate what type of method should be used to get the intermediate bounds
         parameter_file: Load a set of parameters for the MIP solver if a path is given.
 
         Setup the model to be optimized by Gurobi
         '''
-
-        if interval_analysis:
-            self.do_interval_analysis(inp_domain)
-            if self.lower_bounds[-1][0] > 0:
-                # The problem is already guaranteed to be infeasible,
-                # Let's not waste time setting up the MIP
-                return
-        else:
+        if bounds == "opt":
             # First use define_linear_approximation from LinearizedNetwork to
             # compute upper and lower bounds to be able to define Ms
             self.lin_net.define_linear_approximation(inp_domain)
 
             self.lower_bounds = list(map(torch.Tensor, self.lin_net.lower_bounds))
             self.upper_bounds = list(map(torch.Tensor, self.lin_net.upper_bounds))
-        self.gurobi_vars = []
+        elif bounds == "interval":
+            self.do_interval_analysis(inp_domain)
+            if self.lower_bounds[-1][0] > 0:
+                # The problem is already guaranteed to be infeasible,
+                # Let's not waste time setting up the MIP
+                return
+        elif bounds == "interval-kw":
+            self.do_interval_analysis(inp_domain)
+            kw_dual = LooseDualNetworkApproximation(self.layers)
+            kw_dual.remove_maxpools(inp_domain, no_opt=True)
+            lower_bounds, upper_bounds = kw_dual.get_intermediate_bounds(inp_domain)
 
+            # We want to get the best out of interval-analysis and K&W
+
+            # TODO: There is a slight problem. To use the K&W code directly, we
+            # need to make a bunch of changes, notably remove all of the
+            # Maxpooling and convert them to ReLUs. Quick and temporary fix:
+            # take the max of both things if the shapes are all the same so
+            # far, and use the one from interval analysis after the first
+            # difference.
+
+            # If the network are full ReLU, there should be no problem.
+            # If the network are just full ReLU with a MaxPool at the end,
+            # that's still okay because we get the best bounds until the
+            # maxpool, and that's the last thing that we use the bounds for
+            # This is just going to suck if we have a Maxpool early in the
+            # network, and even then, that just means we use interval analysis
+            # so stop complaining.
+            for i in range(len(lower_bounds)):
+                if lower_bounds[i].shape == self.lower_bounds[i].shape:
+                    # Keep the best lower bound
+                    torch.max(lower_bounds[i], self.lower_bounds[i], out=self.lower_bounds[i])
+                    torch.min(upper_bounds[i], self.upper_bounds[i], out=self.upper_bounds[i])
+                else:
+                    # Mismatch in dimension.
+                    # Drop it and stop trying to improve the stuff of interval analysis
+                    break
+            if self.lower_bounds[-1][0] > 0:
+                # The problem is already guaranteed to be infeasible,
+                # Let's not waste time setting up the MIP
+                return
+        else:
+            raise NotImplementedError("Unknown bound computation method.")
+
+        self.gurobi_vars = []
         self.model = grb.Model()
         self.model.setParam('OutputFlag', False)
         self.model.setParam('Threads', 1)

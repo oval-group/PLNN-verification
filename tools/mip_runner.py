@@ -13,7 +13,10 @@ def main():
                         help='.rlv file to prove.')
     parser.add_argument('--sym_bounds', action='store_true')
     parser.add_argument('--use_obj_function', action='store_true')
-    parser.add_argument('--interval-analysis', action='store_true')
+    parser.add_argument('--bounds', type=str,
+                        help="How to derive the intermediate bounds.",
+                        default="opt",
+                        choices=["opt", "interval", "interval-kw"])
     parser.add_argument('--paramfile', type=str,
                         help="Path to a parameter file to use")
     args = parser.parse_args()
@@ -23,7 +26,7 @@ def main():
     mip_network.setup_model(domain,
                             sym_bounds=args.sym_bounds,
                             use_obj_function=args.use_obj_function,
-                            interval_analysis=args.interval_analysis,
+                            bounds=args.bounds,
                             parameter_file=args.paramfile)
 
     sat, solution, nb_visited_states = mip_network.solve(domain)
