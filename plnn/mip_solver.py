@@ -208,8 +208,8 @@ class MIPNetwork:
             # compute upper and lower bounds to be able to define Ms
             self.lin_net.define_linear_approximation(inp_domain)
 
-            self.lower_bounds = self.lin_net.lower_bounds
-            self.upper_bounds = self.lin_net.upper_bounds
+            self.lower_bounds = list(map(torch.Tensor, self.lin_net.lower_bounds))
+            self.upper_bounds = list(map(torch.Tensor, self.lin_net.upper_bounds))
         self.gurobi_vars = []
 
         self.model = grb.Model()
@@ -253,8 +253,8 @@ class MIPNetwork:
             elif type(layer) == nn.ReLU:
 
                 for neuron_idx, pre_var in enumerate(self.gurobi_vars[-1]):
-                    pre_lb = self.lower_bounds[layer_idx-1][neuron_idx]
-                    pre_ub = self.upper_bounds[layer_idx-1][neuron_idx]
+                    pre_lb = self.lower_bounds[layer_idx-1][neuron_idx].item()
+                    pre_ub = self.upper_bounds[layer_idx-1][neuron_idx].item()
 
                     # Use the constraints specified by
                     # Verifying Neural Networks with Mixed Integer Programming
@@ -319,7 +319,7 @@ class MIPNetwork:
                 pre_window_end = pre_start_idx + window_size
 
                 while pre_window_end <= nb_pre:
-                    ub_max = max(self.upper_bounds[layer_idx-1][pre_start_idx:pre_window_end])
+                    ub_max = max(self.upper_bounds[layer_idx-1][pre_start_idx:pre_window_end]).item()
                     window_bin_vars = []
                     neuron_idx = pre_start_idx % stride
                     v = self.model.addVar(vtype=grb.GRB.CONTINUOUS,
@@ -327,7 +327,7 @@ class MIPNetwork:
                                           ub=grb.GRB.INFINITY,
                                           name=f'MaxPool_out_{layer_idx}_{neuron_idx}')
                     for pre_var_idx, pre_var in enumerate(self.gurobi_vars[-1][pre_start_idx:pre_window_end]):
-                        lb = self.lower_bounds[layer_idx-1][pre_start_idx + pre_var_idx]
+                        lb = self.lower_bounds[layer_idx-1][pre_start_idx + pre_var_idx].item()
                         b = self.model.addVar(vtype=grb.GRB.BINARY,
                                               name= f'MaxPool_b_{layer_idx}_{neuron_idx}_{pre_var_idx}')
                         # MIP formulation of max pooling:
