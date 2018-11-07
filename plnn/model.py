@@ -1,5 +1,7 @@
 import math
+import scipy.io
 import torch
+
 
 from collections import Counter, defaultdict
 from plnn.modules import View
@@ -472,6 +474,7 @@ def load_rlv(rlv_infile):
 
     return net_layers, input_domain, prop_layers
 
+
 def simplify_network(all_layers):
     '''
     Given a sequence of Pytorch nn.Module `all_layers`,
@@ -547,6 +550,35 @@ def load_and_simplify(rlv_file, net_cls):
     network = net_cls(all_layers)
 
     return network, domain
+
+
+def load_mat_network(mat_file):
+    '''
+    Take as argument the path to a matlab file,
+    loads the network and return its layers.
+    '''
+    weights = scipy.io.loadmat(mat_file)
+    all_weight_keys = sorted(key for key in weights.keys() if 'weight' in key)
+    all_bias_keys = sorted(key for key in weights.keys() if 'bias' in key)
+
+    all_layers = []
+    for w_key, b_key in zip(all_weight_keys, all_bias_keys):
+        linear_weight = weights[w_key]
+        linear_bias = weights[b_key]
+
+        feat_from, feat_to = linear_weight.shape
+        new_linear = nn.Linear(feat_from, feat_to, bias=True)
+
+        new_linear.weight.data.copy_(torch.FloatTensor(linear_weight.T))
+        new_linear.bias.data.copy_(torch.FloatTensor(linear_bias))
+
+        all_layers.append(new_linear)
+        all_layers.append(nn.ReLU())
+
+    # Remove the extra ReLU at the end
+    del all_layers[-1]
+
+    return all_layers
 
 
 def reluify_maxpool(layers, domain):

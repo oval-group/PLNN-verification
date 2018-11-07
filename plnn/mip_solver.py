@@ -19,7 +19,7 @@ class MIPNetwork:
         # upper bounds at each layer.
         self.lin_net = LinearizedNetwork(layers)
 
-    def solve(self, inp_domain):
+    def solve(self, inp_domain, timeout=None):
         '''
         inp_domain: Tensor containing in each row the lower and upper bound
                     for the corresponding dimension
@@ -28,8 +28,14 @@ class MIPNetwork:
         sat     : boolean indicating whether the MIP is satisfiable.
         solution: Feasible point if the MIP is satisfiable,
                   None otherwise.
+        timeout : Maximum allowed time to run, if is not None
         '''
+        if self.lower_bounds[-1][0] > 0:
+            # The problem is infeasible, and we haven't setup the MIP
+            return (False, None, 0)
 
+        if timeout is not None:
+            self.model.setParam('TimeLimit', timeout)
 
         if self.check_obj_value_callback:
             def early_stop_cb(model, where):
@@ -97,6 +103,9 @@ class MIPNetwork:
                     inp[idx] = var.x
                 optim_val = self.gurobi_vars[-1][-1].x
             return (optim_val < 0, (inp, optim_val), nb_visited_states)
+        elif self.model.status is grb.GRB.TIME_LIMIT:
+            # We timed out, return a None Status
+            return (None, None, nb_visited_states)
         else:
             raise Exception("Unexpected Status code")
 
@@ -116,44 +125,27 @@ class MIPNetwork:
 
         inp_lb = []
         inp_ub = []
-        for dim, (lb, ub) in enumerate(inp_domain):
-            inp_lb.append(lb.item())
-            inp_ub.append(ub.item())
-        self.lower_bounds.append(inp_lb)
-        self.upper_bounds.append(inp_ub)
+
+        self.lower_bounds.append(inp_domain[:, 0])
+        self.upper_bounds.append(inp_domain[:, 1])
 
         layer_idx = 1
         for layer in self.layers:
             new_layer_lb = []
             new_layer_ub = []
             if type(layer) is nn.Linear:
-                for neuron_idx in range(layer.weight.size(0)):
-                    ub = layer.bias[neuron_idx].item()
-                    lb = layer.bias[neuron_idx].item()
-                    for prev_neuron_idx in range(layer.weight.size(1)):
-                        coeff = layer.weight[neuron_idx, prev_neuron_idx].item()
-                        if coeff >= 0:
-                            ub += coeff * self.upper_bounds[-1][prev_neuron_idx]
-                            lb += coeff * self.lower_bounds[-1][prev_neuron_idx]
-                        else:
-                            ub += coeff * self.lower_bounds[-1][prev_neuron_idx]
-                            lb += coeff * self.upper_bounds[-1][prev_neuron_idx]
-                    new_layer_lb.append(lb)
-                    new_layer_ub.append(ub)
+                pos_weights = torch.clamp(layer.weight, min=0)
+                neg_weights = torch.clamp(layer.weight, max=0)
+
+                new_layer_lb = torch.mv(pos_weights, self.lower_bounds[-1]) + \
+                               torch.mv(neg_weights, self.upper_bounds[-1]) + \
+                               layer.bias
+                new_layer_ub = torch.mv(pos_weights, self.upper_bounds[-1]) + \
+                               torch.mv(neg_weights, self.lower_bounds[-1]) + \
+                               layer.bias
             elif type(layer) == nn.ReLU:
-                for neuron_idx, (pre_lb, pre_ub) in enumerate(zip(self.lower_bounds[-1],
-                                                                  self.upper_bounds[-1])):
-                    if pre_lb >= 0 and pre_ub >= 0:
-                        lb = pre_lb
-                        ub = pre_ub
-                    elif pre_lb <= 0 and pre_ub <= 0:
-                        lb = 0
-                        ub = 0
-                    else:
-                        lb = 0
-                        ub = pre_ub
-                    new_layer_lb.append(lb)
-                    new_layer_ub.append(ub)
+                new_layer_lb = torch.clamp(self.lower_bounds[-1], min=0)
+                new_layer_ub = torch.clamp(self.upper_bounds[-1], min=0)
             elif type(layer) == nn.MaxPool1d:
                 assert layer.padding == 0, "Non supported Maxpool option"
                 assert layer.dilation == 1, "Non supported Maxpool option"
@@ -174,6 +166,8 @@ class MIPNetwork:
 
                     pre_start_idx += stride
                     pre_window_end = pre_start_idx + window_size
+                new_layer_lb = torch.Tensor(new_layer_lb)
+                new_layer_ub = torch.Tensor(new_layer_ub)
             elif type(layer) == View:
                 continue
             else:
@@ -205,6 +199,10 @@ class MIPNetwork:
 
         if interval_analysis:
             self.do_interval_analysis(inp_domain)
+            if self.lower_bounds[-1][0] > 0:
+                # The problem is already guaranteed to be infeasible,
+                # Let's not waste time setting up the MIP
+                return
         else:
             # First use define_linear_approximation from LinearizedNetwork to
             # compute upper and lower bounds to be able to define Ms
@@ -217,6 +215,7 @@ class MIPNetwork:
         self.model = grb.Model()
         self.model.setParam('OutputFlag', False)
         self.model.setParam('Threads', 1)
+        self.model.setParam('DualReductions', 0)
         if parameter_file is not None:
             self.model.read(parameter_file)
 
@@ -236,10 +235,10 @@ class MIPNetwork:
             new_layer_gurobi_vars = []
             if type(layer) is nn.Linear:
                 for neuron_idx in range(layer.weight.size(0)):
-
                     lin_expr = layer.bias[neuron_idx].item()
-                    for prev_neuron_idx in range(layer.weight.size(1)):
-                        coeff = layer.weight[neuron_idx, prev_neuron_idx].item()
+                    for prev_neuron_idx_ten in torch.nonzero(layer.weight[neuron_idx]):
+                        prev_neuron_idx = prev_neuron_idx_ten[0]
+                        coeff = layer.weight.data[neuron_idx, prev_neuron_idx]
                         lin_expr += coeff * self.gurobi_vars[-1][prev_neuron_idx]
                     v = self.model.addVar(lb=-grb.GRB.INFINITY,
                                           ub=grb.GRB.INFINITY,
@@ -282,14 +281,16 @@ class MIPNetwork:
                         pre_ub = M
 
                     if pre_lb <= 0 and pre_ub <=0:
-                        x = self.model.addVar(lb=0, ub=0,
-                                              vtype=grb.GRB.CONTINUOUS,
-                                              name = f'ReLU_x_{layer_idx}_{neuron_idx}')
+                        # x = self.model.addVar(lb=0, ub=0,
+                        #                       vtype=grb.GRB.CONTINUOUS,
+                        #                       name = f'ReLU_x_{layer_idx}_{neuron_idx}')
+                        x = 0
                     elif (pre_lb >= 0) and (pre_ub >= 0):
-                        x = self.model.addVar(lb=pre_lb, ub=pre_ub,
-                                              vtype=grb.GRB.CONTINUOUS,
-                                              name = f'ReLU_x_{layer_idx}_{neuron_idx}')
-                        self.model.addConstr(x == pre_var, f'constr_{layer_idx}_{neuron_idx}_fixedpassing')
+                        # x = self.model.addVar(lb=pre_lb, ub=pre_ub,
+                        #                       vtype=grb.GRB.CONTINUOUS,
+                        #                       name = f'ReLU_x_{layer_idx}_{neuron_idx}')
+                        # self.model.addConstr(x == pre_var, f'constr_{layer_idx}_{neuron_idx}_fixedpassing')
+                        x = pre_var
                     else:
                         x = self.model.addVar(lb=0,
                                               ub=grb.GRB.INFINITY,
