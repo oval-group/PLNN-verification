@@ -37,6 +37,7 @@ def make_plots(target_filename, measurements):
     ax_value.set_xlabel("Relative area")
     ax_value.grid(b=True, axis='both')
     ax_value.legend()
+    plt.tight_layout(pad=1)
 
     plt.savefig(target_filename, format=target_format, dpi=300)
 
@@ -54,6 +55,7 @@ def make_plots(target_filename, measurements):
     ax_timings.grid(b=True, axis='both')
     ax_timings.legend()
 
+    plt.tight_layout(pad=1)
     timings_filename = target_filename.replace("." + target_format, "timings." + target_format)
     plt.savefig(timings_filename, format=target_format, dpi=300)
 
